@@ -11,65 +11,59 @@ interface Player {
 
 interface TimerState {
   endTime: number | null;
-  paused: boolean;
 }
 
 interface ScoreboardState {
-  players: {
-    teamA: Player[];
-    teamB: Player[];
-  };
+  playersA: Player[];
+  playersB: Player[];
   timer: TimerState;
+  isPaused: boolean;
   pointsToWin: number;
   numPlayersPerTeam: number;
 }
 
 const initialState: ScoreboardState = {
-  players: {
-    teamA: [
-      { name: 'Player 1 Name', score: 0 },
-      { name: 'Player 2 Name', score: 0 },
-    ],
-    teamB: [
-      { name: 'Player 1 Name', score: 0 },
-      { name: 'Player 2 Name', score: 0 },
-    ],
-  },
-  timer: { endTime: null, paused: true },
+  playersA: [
+    { name: 'Player 1 Name', score: 0 },
+    { name: 'Player 2 Name', score: 0 },
+  ],
+  playersB: [
+    { name: 'Player 1 Name', score: 0 },
+    { name: 'Player 2 Name', score: 0 },
+  ],
+  timer: { endTime: null },
+  isPaused: true,
   pointsToWin: 50,
   numPlayersPerTeam: 2,
 };
 
-const INITIAL_TIMER_SECONDS = 450; // 7:30 as in your image; change to 600 for 10:00
+const INITIAL_TIMER_SECONDS = 450; // 7:30
 
 export default function Scoreboard() {
   const [state, setState] = useState<ScoreboardState>(initialState);
   const [localTime, setLocalTime] = useState(0);
-  const [timeOffset, setTimeOffset] = useState(0); // For server time sync
+  const [timeOffset, setTimeOffset] = useState(0);
 
   useEffect(() => {
-    // Get server time offset for accurate timing
     const offsetRef = ref(db, '.info/serverTimeOffset');
     const offsetUnsub = onValue(offsetRef, (snap) => {
       setTimeOffset(snap.val() || 0);
     });
 
-    // Fetch scoreboard data
-    const scoreboardRef = ref(db, 'scoreboard');
+    const scoreboardRef = ref(db, 'nerfWarsGame'); // Changed to match your DB
     const dataUnsub = onValue(scoreboardRef, (snapshot) => {
       const data = snapshot.val();
       if (data === null) {
-        // Initialize DB if empty
         set(scoreboardRef, initialState);
         setState(initialState);
       } else {
-        // Ensure players arrays have at least 3 slots
-        ['teamA', 'teamB'].forEach((team) => {
-          while (data.players[team].length < 3) {
-            data.players[team].push({ name: `Player ${data.players[team].length + 1} Name`, score: 0 });
+        // Ensure arrays have at least 3 players
+        ['playersA', 'playersB'].forEach((team) => {
+          while (data[team].length < 3) {
+            data[team].push({ name: `Player ${data[team].length + 1} Name`, score: 0 });
           }
         });
-        setState(data);
+        setState({ ...initialState, ...data }); // Merge with defaults
       }
     });
 
@@ -89,17 +83,17 @@ export default function Scoreboard() {
   const serverNow = () => Date.now() + timeOffset;
 
   const updateState = (newState: Partial<ScoreboardState>) => {
-    set(ref(db, 'scoreboard'), { ...state, ...newState });
+    set(ref(db, 'nerfWarsGame'), { ...state, ...newState });
   };
 
-  const updatePlayer = (team: 'teamA' | 'teamB', index: number, updates: Partial<Player>) => {
-    const newPlayers = { ...state.players };
-    newPlayers[team][index] = { ...newPlayers[team][index], ...updates };
-    updateState({ players: newPlayers });
+  const updatePlayer = (team: 'playersA' | 'playersB', index: number, updates: Partial<Player>) => {
+    const newPlayers = state[team].slice();
+    newPlayers[index] = { ...newPlayers[index], ...updates };
+    updateState({ [team]: newPlayers });
   };
 
-  const getTeamTotal = (team: 'teamA' | 'teamB') => 
-    state.players[team].slice(0, state.numPlayersPerTeam).reduce((sum, p) => sum + p.score, 0);
+  const getTeamTotal = (team: 'playersA' | 'playersB') => 
+    state[team].slice(0, state.numPlayersPerTeam).reduce((sum, p) => sum + p.score, 0);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -111,45 +105,47 @@ export default function Scoreboard() {
     ? Math.max(0, Math.floor((state.timer.endTime - serverNow()) / 1000))
     : INITIAL_TIMER_SECONDS;
 
-  const isPaused = state.timer.paused || !state.timer.endTime;
+  const isPaused = state.isPaused;
 
   const handleResume = () => {
     if (isPaused) {
       const now = serverNow();
       updateState({
-        timer: { endTime: now + remainingSeconds * 1000, paused: false },
+        timer: { endTime: now + remainingSeconds * 1000 },
+        isPaused: false,
       });
     } else {
-      updateState({ timer: { ...state.timer, paused: true } });
+      updateState({ isPaused: true });
     }
   };
 
   const handleResetTimer = () => {
-    updateState({ timer: { endTime: null, paused: true } });
+    updateState({ timer: { endTime: null }, isPaused: true });
   };
 
   const handleResetScores = () => {
-    const newPlayers = { ...state.players };
-    ['teamA', 'teamB'].forEach((team) => {
-      newPlayers[team as keyof typeof newPlayers] = newPlayers[team as keyof typeof newPlayers].map((p) => ({ ...p, score: 0 }));
+    updateState({
+      playersA: state.playersA.map(p => ({ ...p, score: 0 })),
+      playersB: state.playersB.map(p => ({ ...p, score: 0 })),
     });
-    updateState({ players: newPlayers });
   };
 
   const handleMode = (num: 2 | 3) => {
-    const newPlayers = { ...state.players };
-    ['teamA', 'teamB'].forEach((team) => {
-      while (newPlayers[team as keyof typeof newPlayers].length < num) {
-        newPlayers[team as keyof typeof newPlayers].push({ name: `Player ${newPlayers[team as keyof typeof newPlayers].length + 1} Name`, score: 0 });
+    const updates: Partial<ScoreboardState> = { numPlayersPerTeam: num };
+    ['playersA', 'playersB'].forEach((team) => {
+      const newTeam = state[team as 'playersA' | 'playersB'].slice();
+      while (newTeam.length < num) {
+        newTeam.push({ name: `Player ${newTeam.length + 1} Name`, score: 0 });
       }
+      updates[team as 'playersA' | 'playersB'] = newTeam;
     });
-    updateState({ numPlayersPerTeam: num, players: newPlayers });
+    updateState(updates);
   };
 
-  const TeamPanel = ({ team, color }: { team: 'teamA' | 'teamB'; color: string }) => (
+  const TeamPanel = ({ team, color }: { team: 'playersA' | 'playersB'; color: string }) => (
     <div className={`p-4 rounded-lg ${color === 'blue' ? 'bg-blue-900/50' : 'bg-red-900/50'}`}>
-      <h3 className={`text-xl font-bold ${color === 'blue' ? 'text-blue-400' : 'text-red-400'}`}>TEAM {team.toUpperCase()}</h3>
-      {state.players[team].slice(0, state.numPlayersPerTeam).map((player, i) => (
+      <h3 className={`text-xl font-bold ${color === 'blue' ? 'text-blue-400' : 'text-red-400'}`}>TEAM {team === 'playersA' ? 'A' : 'B'}</h3>
+      {state[team].slice(0, state.numPlayersPerTeam).map((player, i) => (
         <div key={i} className="flex items-center my-2">
           <input
             type="text"
@@ -214,14 +210,14 @@ export default function Scoreboard() {
           <div className="text-center">
             <div className="text-4xl font-bold text-blue-400">TEAM A</div>
             <div className="w-12 h-12 mx-auto mt-2 rounded-full bg-blue-900 flex items-center justify-center text-blue-400 text-2xl font-bold">
-              {getTeamTotal('teamA')}
+              {getTeamTotal('playersA')}
             </div>
           </div>
           <span className="text-2xl self-center mx-4">VS</span>
           <div className="text-center">
             <div className="text-4xl font-bold text-red-400">TEAM B</div>
             <div className="w-12 h-12 mx-auto mt-2 rounded-full bg-red-900 flex items-center justify-center text-red-400 text-2xl font-bold">
-              {getTeamTotal('teamB')}
+              {getTeamTotal('playersB')}
             </div>
           </div>
         </div>
@@ -243,8 +239,8 @@ export default function Scoreboard() {
         </div>
 
         <div className="grid grid-cols-2 gap-6">
-          <TeamPanel team="teamA" color="blue" />
-          <TeamPanel team="teamB" color="red" />
+          <TeamPanel team="playersA" color="blue" />
+          <TeamPanel team="playersB" color="red" />
         </div>
       </div>
     </div>
