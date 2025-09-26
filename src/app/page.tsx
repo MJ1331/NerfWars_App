@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ref, onValue, set } from 'firebase/database'; // Removed serverTimestamp
+import { ref, onValue, set } from 'firebase/database';
 import { db } from '@/lib/firebase';
 
 interface Player {
@@ -40,24 +40,43 @@ const initialState: ScoreboardState = {
   numPlayersPerTeam: 2,
 };
 
-const INITIAL_TIMER_SECONDS = 600; // 10:00
+const INITIAL_TIMER_SECONDS = 450; // 7:30 as in your image; change to 600 for 10:00
 
 export default function Scoreboard() {
   const [state, setState] = useState<ScoreboardState>(initialState);
   const [localTime, setLocalTime] = useState(0);
+  const [timeOffset, setTimeOffset] = useState(0); // For server time sync
 
   useEffect(() => {
-    const scoreboardRef = ref(db, 'scoreboard');
-    const unsubscribe = onValue(scoreboardRef, (snapshot) => {
-      const data = snapshot.val() || initialState;
-      ['teamA', 'teamB'].forEach((team) => {
-        while (data.players[team].length < 3) {
-          data.players[team].push({ name: `Player ${data.players[team].length + 1} Name`, score: 0 });
-        }
-      });
-      setState(data);
+    // Get server time offset for accurate timing
+    const offsetRef = ref(db, '.info/serverTimeOffset');
+    const offsetUnsub = onValue(offsetRef, (snap) => {
+      setTimeOffset(snap.val() || 0);
     });
-    return () => unsubscribe();
+
+    // Fetch scoreboard data
+    const scoreboardRef = ref(db, 'scoreboard');
+    const dataUnsub = onValue(scoreboardRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data === null) {
+        // Initialize DB if empty
+        set(scoreboardRef, initialState);
+        setState(initialState);
+      } else {
+        // Ensure players arrays have at least 3 slots
+        ['teamA', 'teamB'].forEach((team) => {
+          while (data.players[team].length < 3) {
+            data.players[team].push({ name: `Player ${data.players[team].length + 1} Name`, score: 0 });
+          }
+        });
+        setState(data);
+      }
+    });
+
+    return () => {
+      offsetUnsub();
+      dataUnsub();
+    };
   }, []);
 
   useEffect(() => {
@@ -66,6 +85,8 @@ export default function Scoreboard() {
     }, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  const serverNow = () => Date.now() + timeOffset;
 
   const updateState = (newState: Partial<ScoreboardState>) => {
     set(ref(db, 'scoreboard'), { ...state, ...newState });
@@ -87,14 +108,14 @@ export default function Scoreboard() {
   };
 
   const remainingSeconds = state.timer.endTime
-    ? Math.max(0, Math.floor((state.timer.endTime - localTime) / 1000))
+    ? Math.max(0, Math.floor((state.timer.endTime - serverNow()) / 1000))
     : INITIAL_TIMER_SECONDS;
 
   const isPaused = state.timer.paused || !state.timer.endTime;
 
   const handleResume = () => {
     if (isPaused) {
-      const now = Date.now();
+      const now = serverNow();
       updateState({
         timer: { endTime: now + remainingSeconds * 1000, paused: false },
       });
