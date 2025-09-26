@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ref, onValue, set, serverTimestamp } from 'firebase/database';
+import { ref, onValue, set } from 'firebase/database'; // Removed serverTimestamp
 import { db } from '@/lib/firebase';
 
 interface Player {
@@ -40,7 +40,7 @@ const initialState: ScoreboardState = {
   numPlayersPerTeam: 2,
 };
 
-const INITIAL_TIMER_SECONDS = 450; 
+const INITIAL_TIMER_SECONDS = 600; // 10:00
 
 export default function Scoreboard() {
   const [state, setState] = useState<ScoreboardState>(initialState);
@@ -50,7 +50,6 @@ export default function Scoreboard() {
     const scoreboardRef = ref(db, 'scoreboard');
     const unsubscribe = onValue(scoreboardRef, (snapshot) => {
       const data = snapshot.val() || initialState;
-    
       ['teamA', 'teamB'].forEach((team) => {
         while (data.players[team].length < 3) {
           data.players[team].push({ name: `Player ${data.players[team].length + 1} Name`, score: 0 });
@@ -111,7 +110,7 @@ export default function Scoreboard() {
   const handleResetScores = () => {
     const newPlayers = { ...state.players };
     ['teamA', 'teamB'].forEach((team) => {
-      newPlayers[team] = newPlayers[team].map((p) => ({ ...p, score: 0 }));
+      newPlayers[team as keyof typeof newPlayers] = newPlayers[team as keyof typeof newPlayers].map((p) => ({ ...p, score: 0 }));
     });
     updateState({ players: newPlayers });
   };
@@ -119,8 +118,8 @@ export default function Scoreboard() {
   const handleMode = (num: 2 | 3) => {
     const newPlayers = { ...state.players };
     ['teamA', 'teamB'].forEach((team) => {
-      while (newPlayers[team].length < num) {
-        newPlayers[team].push({ name: `Player ${newPlayers[team].length + 1} Name`, score: 0 });
+      while (newPlayers[team as keyof typeof newPlayers].length < num) {
+        newPlayers[team as keyof typeof newPlayers].push({ name: `Player ${newPlayers[team as keyof typeof newPlayers].length + 1} Name`, score: 0 });
       }
     });
     updateState({ numPlayersPerTeam: num, players: newPlayers });
